@@ -67,6 +67,10 @@ func prepareUpstreamBody(payload, original []byte, sa *storedAuth, upstreamModel
 	// 5. rewriteModel: swap client model name to upstream model id.
 	rewriteModelInPlace(obj, upstreamModel)
 
+	// 6. normalizeThinking: translate Anthropic thinking/effort fields and
+	// keep reasoning_effort aligned with Claude /effort levels.
+	normalizeThinkingInPlace(obj, original)
+
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return src
@@ -493,7 +497,7 @@ func forceMaxThinking(obj map[string]any) bool {
 	if !strings.HasPrefix(model, "hy3") {
 		return false
 	}
-	if eff, _ := obj["reasoning_effort"].(string); eff == "high" {
+	if eff, _ := obj["reasoning_effort"].(string); eff == "high" || eff == "none" {
 		return false
 	}
 	obj["reasoning_effort"] = "high"
@@ -545,4 +549,107 @@ func isEmptyValue(v any) bool {
 		return true
 	}
 	return false
+}
+
+func budgetToEffortLevel(budget int) string {
+	switch {
+	case budget == 0:
+		return "none"
+	case budget < 0:
+		return "high"
+	case budget <= 1024:
+		return "low"
+	case budget <= 8192:
+		return "medium"
+	case budget <= 24576:
+		return "high"
+	default:
+		return "xhigh"
+	}
+}
+
+func extractThinkingEffortFromMap(src map[string]any) (string, bool) {
+	if len(src) == 0 {
+		return "", false
+	}
+	outputEffort := ""
+	if oc, ok := src["output_config"].(map[string]any); ok {
+		if eff, ok := oc["effort"].(string); ok {
+			outputEffort = strings.ToLower(strings.TrimSpace(eff))
+		}
+	}
+	if th, ok := src["thinking"].(map[string]any); ok {
+		typ, _ := th["type"].(string)
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		switch typ {
+		case "disabled":
+			return "none", true
+		case "adaptive", "auto":
+			if outputEffort != "" {
+				return outputEffort, true
+			}
+		case "enabled":
+			if bt, ok := th["budget_tokens"].(float64); ok {
+				return budgetToEffortLevel(int(bt)), true
+			}
+			if outputEffort != "" {
+				return outputEffort, true
+			}
+			return "high", true
+		}
+	}
+	if outputEffort != "" {
+		return outputEffort, true
+	}
+	return "", false
+}
+
+// normalizeThinkingInPlace maps Anthropic thinking / output_config.effort to
+// OpenAI reasoning_effort (when not already provided) and strips Anthropic-only
+// thinking fields before forwarding to CodeBuddy upstream.
+func normalizeThinkingInPlace(obj map[string]any, original []byte) bool {
+	changed := false
+	if eff, hasEff := obj["reasoning_effort"].(string); hasEff {
+		norm := strings.ToLower(strings.TrimSpace(eff))
+		if norm == "" {
+			delete(obj, "reasoning_effort")
+			changed = true
+		} else if norm != eff {
+			obj["reasoning_effort"] = norm
+			changed = true
+		}
+	}
+
+	if _, ok := obj["reasoning_effort"]; !ok {
+		if eff, ok := extractThinkingEffortFromMap(obj); ok && eff != "" {
+			obj["reasoning_effort"] = eff
+			changed = true
+		} else if len(original) > 0 {
+			var origMap map[string]any
+			if json.Unmarshal(original, &origMap) == nil {
+				if eff, ok := extractThinkingEffortFromMap(origMap); ok && eff != "" {
+					obj["reasoning_effort"] = eff
+					changed = true
+				}
+			}
+		}
+	}
+
+	if _, ok := obj["thinking"]; ok {
+		delete(obj, "thinking")
+		changed = true
+	}
+	if _, ok := obj["output_config"]; ok {
+		delete(obj, "output_config")
+		changed = true
+	}
+
+	model, _ := obj["model"].(string)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "hy3") {
+		if eff, _ := obj["reasoning_effort"].(string); eff != "none" && eff != "high" {
+			obj["reasoning_effort"] = "high"
+			changed = true
+		}
+	}
+	return changed
 }

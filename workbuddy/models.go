@@ -536,6 +536,7 @@ func handleModelStatic(raw []byte) ([]byte, error) {
 	cacheModelAliases(req.Host)
 	models := mmFilterDisabled(wbModels(), realmGlobal)
 	models = append(models, applyDynamicPrefix(mmFilterDisabled(wbCNModels(), realmCN), realmCN)...)
+	models = applyThinkingSupport(models)
 	models = filterExcludedModels(models, req.Host)
 	return okEnvelope(pluginapi.ModelResponse{Provider: providerName, Models: models})
 }
@@ -567,6 +568,51 @@ func handleModelForAuth(raw []byte) ([]byte, error) {
 	models = mmEmissionModels(models, realm, authID)
 	models = mmFilterDisabled(models, realm)
 	models = applyDynamicPrefix(models, realm)
+	models = applyThinkingSupport(models)
 	models = filterExcludedModels(models, req.Host)
 	return okEnvelope(pluginapi.ModelResponse{Provider: providerName, Models: models})
+}
+
+var workbuddyThinkingLevels = []string{"none", "low", "medium", "high", "xhigh", "max"}
+
+func supportsThinkingModel(id string) bool {
+	s := strings.ToLower(strings.TrimSpace(id))
+	if idx := strings.LastIndex(s, "/"); idx >= 0 {
+		s = s[idx+1:]
+	}
+	if s == "" || strings.HasPrefix(s, "glm-") || strings.HasPrefix(s, "mimo-") || s == "minimax-m3" {
+		return false
+	}
+	for _, prefix := range []string{
+		"deepseek-",
+		"kimi-k3",
+		"hy3",
+		"hy4",
+		"step-5",
+		"minimax-m3.1",
+		"space-bunny",
+	} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	switch s {
+	case "auto", "default-model", "deep-model", "balanced-model", "primary-model":
+		return true
+	}
+	return false
+}
+
+func applyThinkingSupport(models []pluginapi.ModelInfo) []pluginapi.ModelInfo {
+	for i := range models {
+		if models[i].Thinking != nil || !supportsThinkingModel(models[i].ID) {
+			continue
+		}
+		models[i].Thinking = &pluginapi.ThinkingSupport{
+			ZeroAllowed:    true,
+			DynamicAllowed: true,
+			Levels:         append([]string(nil), workbuddyThinkingLevels...),
+		}
+	}
+	return models
 }

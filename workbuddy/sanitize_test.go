@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 func TestSanitizeBlockedTemplates_ClaudeCode(t *testing.T) {
@@ -302,5 +304,101 @@ func TestRewriteSystemForUpstream_DeepSeekHarness(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "You are an AI assistant. Be brief.") {
 		t.Fatalf("rewrite lost the surrounding prompt: %s", string(out))
+	}
+}
+
+func TestForceMaxThinking_PreservesNone(t *testing.T) {
+	obj := map[string]any{"model": "hy3-std", "reasoning_effort": "none"}
+	if forceMaxThinking(obj) {
+		t.Fatal("should preserve explicit none")
+	}
+	if obj["reasoning_effort"] != "none" {
+		t.Fatalf("got %v, want none", obj["reasoning_effort"])
+	}
+}
+
+func TestNormalizeThinkingInPlace(t *testing.T) {
+	// 1. Adaptive + output_config.effort via original request fallback
+	obj := map[string]any{"model": "deepseek-v4-pro"}
+	orig := []byte(`{"model":"cn/deepseek-v4-pro","thinking":{"type":"adaptive"},"output_config":{"effort":"low"}}`)
+	if !normalizeThinkingInPlace(obj, orig) {
+		t.Fatal("expected change from original adaptive effort")
+	}
+	if obj["reasoning_effort"] != "low" {
+		t.Fatalf("got %v, want low", obj["reasoning_effort"])
+	}
+
+	// 2. Disabled strips thinking/output_config and sets none
+	obj2 := map[string]any{
+		"model":         "deepseek-v4.1-flash",
+		"thinking":      map[string]any{"type": "disabled"},
+		"output_config": map[string]any{"effort": "high"},
+	}
+	if !normalizeThinkingInPlace(obj2, nil) {
+		t.Fatal("expected change for disabled thinking")
+	}
+	if obj2["reasoning_effort"] != "none" {
+		t.Fatalf("got %v, want none", obj2["reasoning_effort"])
+	}
+	if _, exists := obj2["thinking"]; exists {
+		t.Fatal("thinking field should be deleted")
+	}
+	if _, exists := obj2["output_config"]; exists {
+		t.Fatal("output_config field should be deleted")
+	}
+
+	// 3. Enabled with budget_tokens
+	obj3 := map[string]any{
+		"model":    "kimi-k3.1-pro",
+		"thinking": map[string]any{"type": "enabled", "budget_tokens": float64(8000)},
+	}
+	normalizeThinkingInPlace(obj3, nil)
+	if obj3["reasoning_effort"] != "medium" {
+		t.Fatalf("got %v, want medium", obj3["reasoning_effort"])
+	}
+
+	// 4. Hy3 keeps high for non-none, preserves none
+	obj4 := map[string]any{"model": "hy3", "reasoning_effort": "low"}
+	normalizeThinkingInPlace(obj4, nil)
+	if obj4["reasoning_effort"] != "high" {
+		t.Fatalf("hy3 got %v, want high", obj4["reasoning_effort"])
+	}
+	obj5 := map[string]any{"model": "hy3", "reasoning_effort": "none"}
+	normalizeThinkingInPlace(obj5, nil)
+	if obj5["reasoning_effort"] != "none" {
+		t.Fatalf("hy3 disabled got %v, want none", obj5["reasoning_effort"])
+	}
+}
+
+func TestApplyThinkingSupport(t *testing.T) {
+	in := []pluginapi.ModelInfo{
+		{ID: "cn/deepseek-v4-pro"},
+		{ID: "deepseek-v4.1-flash"},
+		{ID: "cn/kimi-k3.1-pro"},
+		{ID: "cn/hy4-preview"},
+		{ID: "cn/glm-5.3"},
+		{ID: "cn/mimo-v2.6-pro"},
+		{ID: "minimax-m3"},
+		{ID: "cn/minimax-m3.1-flash"},
+	}
+	out := applyThinkingSupport(in)
+	want := map[string]bool{
+		"cn/deepseek-v4-pro":    true,
+		"deepseek-v4.1-flash":   true,
+		"cn/kimi-k3.1-pro":      true,
+		"cn/hy4-preview":        true,
+		"cn/glm-5.3":            false,
+		"cn/mimo-v2.6-pro":      false,
+		"minimax-m3":            false,
+		"cn/minimax-m3.1-flash": true,
+	}
+	for _, m := range out {
+		has := m.Thinking != nil
+		if has != want[m.ID] {
+			t.Fatalf("model %s Thinking=%v, want %v", m.ID, has, want[m.ID])
+		}
+		if has && (!m.Thinking.ZeroAllowed || len(m.Thinking.Levels) != 6) {
+			t.Fatalf("model %s unexpected Thinking: %+v", m.ID, m.Thinking)
+		}
 	}
 }

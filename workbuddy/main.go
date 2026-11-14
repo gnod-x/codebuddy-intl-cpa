@@ -83,7 +83,7 @@ import (
 const (
 	providerName  = "workbuddy"
 	authFileName  = "workbuddy.json"
-	pluginLogoURL = "https://raw.githubusercontent.com/zidanefaqih/codebuddy-intl-cpa/main/logo.png"
+	pluginLogoURL = "https://raw.githubusercontent.com/gnod-x/codebuddy-intl-cpa/main/logo.png"
 	// CN chat/auth gateway (iss = codebuddy.cn realm).
 	upstreamBaseCN = "https://copilot.tencent.com"
 	// Global chat/auth gateway (iss = workbuddy.ai realm). APISIX on
@@ -462,7 +462,7 @@ func wbRegistration() registration {
 			Name:             pluginDisplayName,
 			Version:          version,
 			Author:           "zidanefaqih (based on Sliverkiss/cpa-plugin, itself based on workbuddy by lovingfish)",
-			GitHubRepository: "https://github.com/zidanefaqih/codebuddy-intl-cpa",
+			GitHubRepository: "https://github.com/gnod-x/codebuddy-intl-cpa",
 			Logo:             pluginLogoURL,
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "checkin_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable daily auto check-in at 09:00 and 21:00 local time for CN accounts (default true)."},

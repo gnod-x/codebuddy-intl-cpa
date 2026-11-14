@@ -36,7 +36,7 @@ import (
 // copy is bumped at version-bump time, before the tag/CI release exists, so it
 // can advertise an uninstallable version). Var (not const) so tests can point
 // it at an httptest server.
-var updateRegistryURL = "https://github.com/zidanefaqih/codebuddy-intl-cpa/releases/latest/download/registry.json"
+var updateRegistryURL = "https://github.com/gnod-x/codebuddy-intl-cpa/releases/latest/download/registry.json"
 
 const (
 	updateCacheTTL         = 6 * time.Hour
